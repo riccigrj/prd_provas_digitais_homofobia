@@ -1,0 +1,1147 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Transform": "AWS::Serverless-2016-10-31",
+  "Description": "An AWS Serverless Specification template describing your function.",
+  "Parameters": {
+    "S3Bucket": {
+      "Type": "String",
+      "Description": "S3 onde está localizado o lambda.",
+      "Default": "bucket-lambda-l"
+    },
+    "S3KeyLambda": {
+      "Type": "String",
+      "Description": "S3 Key onde está localizado o lambda.",
+      "Default": "lgbtqia/lambda_lgbtqia.zip"
+    },
+    "S3KeyElastic": {
+      "Type": "String",
+      "Description": "S3 Key onde está localizado a biblioteca Elastic.",
+      "Default": "lgbtqia/elasticsearch.zip"
+    },
+    "S3KeyGoogle": {
+      "Type": "String",
+      "Description": "S3 Key onde está localizado a biblioteca Google Language API.",
+      "Default": "lgbtqia/google-language-api.zip"
+    },
+    "S3KeyGrabzit": {
+      "Type": "String",
+      "Description": "S3 Key onde está localizado a biblioteca Grabzit.",
+      "Default": "lgbtqia/grabzit.zip"
+    },
+    "S3KeyHash": {
+      "Type": "String",
+      "Description": "S3 Key onde está localizado a biblioteca Hash.",
+      "Default": "lgbtqia/hashlib.zip"
+    },
+    "ClusterSecurityGroup": {
+      "Type": "List<AWS::EC2::SecurityGroup::Id>",
+      "Description": "Security Group do Cluster.",
+      "Default": "sg-03bdbee717cb1bfbd"
+    },
+    "ClusterSubnetId": {
+      "Type": "AWS::EC2::Subnet::Id",
+      "Description": "Subnet do Cluster.",
+      "Default": "subnet-873bd0d8"
+    },
+    "LambdaSubnetIds": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "Subnet do Lambda, com saída pra internet.",
+      "Default": "subnet-6d03f64c"
+    },
+    "LambdaSecurityGroup": {
+      "Type": "List<AWS::EC2::SecurityGroup::Id>",
+      "Description": "Security Group do Lambda.",
+      "Default": "sg-03bdbee717cb1bfbd"
+    },
+    "TwitterConsumerKey": {
+      "Type": "String",
+      "Description": "Twitter Consumer Key",
+      "NoEcho": true
+    },
+    "TwitterConsumerSecret": {
+      "Type": "String",
+      "Description": "Twitter Cosnumer Secret",
+      "NoEcho": true
+    },
+    "TwitterOAuthToken": {
+      "Type": "String",
+      "Description": "Twitter OAuth Token",
+      "NoEcho": true
+    },
+    "TwitterOAuthTokenSecret": {
+      "Type": "String",
+      "Description": "Twitter OAuth Token Secret",
+      "NoEcho": true
+    },
+    "KeyPair": {
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "Description": "Chave de acesso que será usado nas EC2",
+      "Default": "AWS_TCC"
+    }
+  },
+  "Resources": {
+    "EC2InstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "InstanceProfileName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::StackName"
+              },
+              "Role"
+            ]
+          ]
+        },
+        "Roles": [
+          {
+            "Ref": "EC2Role"
+          }
+        ]
+      }
+    },
+    "EC2Role": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
+        ],
+        "RoleName": {
+          "Fn::Join": [
+            "-",
+            [
+              "EC2SQSRoleTwitter",
+              {
+                "Ref": "AWS::StackName"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    "LogstashEC2": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "DeleteOnTermination": true,
+              "Encrypted": false,
+              "VolumeSize": 8,
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "EC2InstanceProfile"
+        },
+        "ImageId": "ami-0323c3dd2da7fb37d",
+        "InstanceType": "t2.micro",
+        "KeyName": {
+          "Ref": "KeyPair"
+        },
+        "SecurityGroupIds": {
+          "Ref": "ClusterSecurityGroup"
+        },
+        "SubnetId": {
+          "Ref": "ClusterSubnetId"
+        },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "\n",
+              [
+                "#!/bin/bash",
+                "rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "cat <<EOT >>  \"/etc/yum.repos.d/logstash.repo\"",
+                "[logstash-7.x]",
+                "name=Elastic repository for 7.x packages",
+                "baseurl=https://artifacts.elastic.co/packages/7.x/yum",
+                "gpgcheck=1",
+                "gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "enabled=1",
+                "autorefresh=1",
+                "type=rpm-md",
+                "EOT",
+                "yum update -y",
+                "amazon-linux-extras install java-openjdk11 -y",
+                "yum install logstash -y",
+                "cat <<EOT > \"/etc/logstash/conf.d/lgbtia-helper.conf\"",
+                "  input {",
+                "    twitter {",
+                {
+                  "Fn::Sub": [
+                    "      consumer_key => \"${ConsumerKey}\"",
+                    {
+                      "ConsumerKey": {
+                        "Ref": "TwitterConsumerKey"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Fn::Sub": [
+                    "      consumer_secret => \"${ConsumerSecret}\"",
+                    {
+                      "ConsumerSecret": {
+                        "Ref": "TwitterConsumerSecret"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Fn::Sub": [
+                    "      oauth_token => \"${OAuthToken}\"",
+                    {
+                      "OAuthToken": {
+                        "Ref": "TwitterOAuthToken"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Fn::Sub": [
+                    "      oauth_token_secret => \"${OAuthTokenSecret}\"",
+                    {
+                      "OAuthTokenSecret": {
+                        "Ref": "TwitterOAuthTokenSecret"
+                      }
+                    }
+                  ]
+                },
+                "      keywords => [\"gay\",\"viad\",\"vead\",\"homo\",\"travesti\",\"travec\",\"trans\",\"bixa\",\"bicha\",\"bichona\",\"boiol\",\"sapatão\",\"sapata\",\"sapatona\",\"baitola\",\"bisexual\",\"bissexual\",\"marica\",\"lesbica\",\"afeminado\",\"efeminado\",\"mariquinha\"]",
+                "      full_tweet => true",
+                "      languages => [\"pt\"]",
+                "    }",
+                "  }",
+                "  filter {",
+                "    mutate {",
+                "    add_field => { \"[@metadata][lgbtqia_words]\" => [\"gay\",\"viad\",\"vead\",\"homo\",\"travesti\",\"travec\",\"trans\",\"bixa\",\"bicha\",\"bichona\",\"boiol\",\"sapatão\",\"sapata\",\"sapatona\",\"baitola\",\"bisexual\",\"bissexual\",\"marica\",\"lesbica\",\"afeminado\",\"efeminado\",\"mariquinha\"]}",
+                "    }",
+                "    ruby {",
+                "      code => '",
+                "        def get_word(hash,word)",
+                "          resp = false",
+                "          hash.each { |key,value|",
+                "            if value.is_a?(Hash)",
+                "              resp = get_word(value,word)",
+                "            end",
+                "            if !(value.nil?)&&(value.is_a?(String))",
+                "              if (value.downcase.include? word)",
+                "                resp = true",
+                "              end",
+                "            end",
+                "            break if resp",
+                "          }",
+                "          return resp",
+                "        end",
+                "        lgbtqia_words = event.get(\"[@metadata][lgbtqia_words]\")",
+                "        event_hash = event.to_hash",
+                "        lgbtqia_words.each do |word|",
+                "         if (get_word(event_hash,word))",
+                "           if event.get(\"[word]\").nil?",
+                "             event.set(\"word\",[word])",
+                "           else",
+                "             event.set(\"word\", [event.get(\"[word]\"),word])",
+                "           end",
+                "         end",
+                "       end",
+                "      '",
+                "    }",
+                "  }",
+                "  output {",
+                "        sqs {",
+                {
+                  "Fn::Sub": [
+                    "          queue => \"${SQSName}\"",
+                    {
+                      "SQSName": {
+                        "Fn::GetAtt": [
+                          "TwitterSQS",
+                          "QueueName"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Fn::Sub": [
+                    "          region => \"${Region}\"",
+                    {
+                      "Region": {
+                        "Ref": "AWS::Region"
+                      }
+                    }
+                  ]
+                },
+                "        }",
+                " }",
+                "EOT",
+                "sed -i 's/-Xms1g/-Xms512m/g' /etc/logstash/jvm.options",
+                "sed -i 's/-Xmx1g/-Xmx512m/g' /etc/logstash/jvm.options",
+                "/usr/share/logstash/bin/system-install /etc/logstash/startup.options systemd",
+                "systemctl start logstash"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "TwitterSQS": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": {
+          "Fn::Join": [
+            "-",
+            [
+              "TwitterSQS",
+              {
+                "Ref": "AWS::StackName"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    "LambdaRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonSQSFullAccess",
+          "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole",
+          "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+        ],
+        "RoleName": {
+          "Fn::Join": [
+            "-",
+            [
+              "LambdaRoleLGBTQIA",
+              {
+                "Ref": "AWS::StackName"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    "LayerElastic": {
+      "Type": "AWS::Lambda::LayerVersion",
+      "Properties": {
+        "CompatibleRuntimes": [
+          "python3.7"
+        ],
+        "Content": {
+          "S3Bucket": {
+            "Ref": "S3Bucket"
+          },
+          "S3Key": {
+            "Ref": "S3KeyElastic"
+          }
+        },
+        "Description": "Biblioteca Elasticsearch",
+        "LayerName": "elasticsearch"
+      }
+    },
+    "LayerGoogle": {
+      "Type": "AWS::Lambda::LayerVersion",
+      "Properties": {
+        "CompatibleRuntimes": [
+          "python3.7"
+        ],
+        "Content": {
+          "S3Bucket": {
+            "Ref": "S3Bucket"
+          },
+          "S3Key": {
+            "Ref": "S3KeyGoogle"
+          }
+        },
+        "Description": "Biblioteca Google Language API",
+        "LayerName": "google-language-api"
+      }
+    },
+    "LayerGrabzit": {
+      "Type": "AWS::Lambda::LayerVersion",
+      "Properties": {
+        "CompatibleRuntimes": [
+          "python3.7"
+        ],
+        "Content": {
+          "S3Bucket": {
+            "Ref": "S3Bucket"
+          },
+          "S3Key": {
+            "Ref": "S3KeyGrabzit"
+          }
+        },
+        "Description": "Biblioteca Grabzit",
+        "LayerName": "grabzit"
+      }
+    },
+    "LayerHashlib": {
+      "Type": "AWS::Lambda::LayerVersion",
+      "Properties": {
+        "CompatibleRuntimes": [
+          "python3.7"
+        ],
+        "Content": {
+          "S3Bucket": {
+            "Ref": "S3Bucket"
+          },
+          "S3Key": {
+            "Ref": "S3KeyHash"
+          }
+        },
+        "Description": "Biblioteca HashLib",
+        "LayerName": "hashlib"
+      }
+    },
+    "LGBTQIAHelper": {
+      "Type": "AWS::Serverless::Function",
+      "Properties": {
+        "Handler": "lambda_function.lambda_handler",
+        "Runtime": "python3.7",
+        "CodeUri": {
+          "Key": {
+            "Ref": "S3KeyLambda"
+          },
+          "Bucket": {
+            "Ref": "S3Bucket"
+          }
+        },
+        "Description": "Lambda LGBTQIA Helper",
+        "MemorySize": 128,
+        "Timeout": 30,
+        "Role": {
+          "Fn::GetAtt": [
+            "LambdaRole",
+            "Arn"
+          ]
+        },
+        "Events": {
+          "SQS1": {
+            "Type": "SQS",
+            "Properties": {
+              "Queue": {
+                "Fn::GetAtt": [
+                  "TwitterSQS",
+                  "Arn"
+                ]
+              },
+              "BatchSize": 10
+            }
+          }
+        },
+        "VpcConfig": {
+          "SecurityGroupIds": {
+            "Ref": "LambdaSecurityGroup"
+          },
+          "SubnetIds": {
+            "Ref": "LambdaSubnetIds"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "GOOGLE_APPLICATION_CREDENTIALS": "credentials.json",
+            "ES_DATA": {
+              "Fn::Join": [
+                ",",
+                [
+                  {
+                    "Fn::GetAtt": [
+                      "DataNode1",
+                      "PrivateIp"
+                    ]
+                  },
+                  {
+                    "Fn::GetAtt": [
+                      "DataNode2",
+                      "PrivateIp"
+                    ]
+                  },
+                  {
+                    "Fn::GetAtt": [
+                      "DataNode3",
+                      "PrivateIp"
+                    ]
+                  }
+                ]
+              ]
+            }
+          }
+        },
+        "Layers": [
+          {
+            "Ref": "LayerElastic"
+          },
+          {
+            "Ref": "LayerGoogle"
+          },
+          {
+            "Ref": "LayerGrabzit"
+          },
+          {
+            "Ref": "LayerHashlib"
+          }
+        ]
+      }
+    },
+    "EC2InstanceProfileCluster": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "InstanceProfileName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::StackName"
+              },
+              "InstanceEC2RoleCluster"
+            ]
+          ]
+        },
+        "Roles": [
+          {
+            "Ref": "EC2RoleCluster"
+          }
+        ]
+      }
+    },
+    "EC2RoleCluster": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "ec2:DescribeInstances"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ]
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "AWS::StackName"
+                  },
+                  "EC2PolicyCluster"
+                ]
+              ]
+            }
+          }
+        ],
+        "RoleName": {
+          "Fn::Join": [
+            "-",
+            [
+              "EC2RoleCluster",
+              {
+                "Ref": "AWS::StackName"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    "MasterNode1": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "cluster",
+            "Value": "lgbtqia-helper"
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "EC2InstanceProfileCluster"
+        },
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "DeleteOnTermination": true,
+              "Encrypted": false,
+              "VolumeSize": 10,
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "ImageId": "ami-0323c3dd2da7fb37d",
+        "InstanceType": "t2.micro",
+        "KeyName": {
+          "Ref": "KeyPair"
+        },
+        "SecurityGroupIds": {
+          "Ref": "ClusterSecurityGroup"
+        },
+        "SubnetId": {
+          "Ref": "ClusterSubnetId"
+        },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "\n",
+              [
+                "#!/bin/bash",
+                "rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "cat <<EOT >>  \"/etc/yum.repos.d/elasticsearch.repo\"",
+                "[elasticsearch]",
+                "name=Elasticsearch repository for 7.x packages",
+                "baseurl=https://artifacts.elastic.co/packages/7.x/yum",
+                "gpgcheck=1",
+                "gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "enabled=0",
+                "autorefresh=1",
+                "type=rpm-md",
+                "EOT",
+                "yum update -y",
+                "amazon-linux-extras install java-openjdk11 -y",
+                "yum install --enablerepo=elasticsearch elasticsearch -y",
+                "/usr/share/elasticsearch/bin/elasticsearch-plugin install discovery-ec2 -b",
+                "cat <<EOT > \"/etc/elasticsearch/elasticsearch.yml\"",
+                "cluster.name: lgbtqia-helper",
+                "node.name: \"master-1\"",
+                "node.data: false",
+                "node.master: true",
+                "node.ingest: true",
+                "path.data: /var/lib/elasticsearch",
+                "path.logs: /var/log/elasticsearch",
+                "network.host: 0.0.0.0",
+                "network.publish_host: _site_",
+                "http.port: 9200",
+                "discovery.seed_providers: ec2",
+                "discovery.ec2.tag.cluster: lgbtqia-helper",
+                "discovery.ec2.endpoint: \"ec2.us-east-1.amazonaws.com\"",
+                "cluster.initial_master_nodes: \"master-1\"",
+                "EOT",
+                "sed -i 's/-Xms1g/-Xms512m/g' /etc/elasticsearch/jvm.options",
+                "sed -i 's/-Xmx1g/-Xmx512m/g' /etc/elasticsearch/jvm.options",
+                "systemctl start elasticsearch"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "CoordinatorNode1": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "cluster",
+            "Value": "lgbtqia-helper"
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "EC2InstanceProfileCluster"
+        },
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "DeleteOnTermination": true,
+              "Encrypted": false,
+              "VolumeSize": 10,
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "ImageId": "ami-0323c3dd2da7fb37d",
+        "InstanceType": "t2.micro",
+        "KeyName": {
+          "Ref": "KeyPair"
+        },
+        "SecurityGroupIds": {
+          "Ref": "ClusterSecurityGroup"
+        },
+        "SubnetId": {
+          "Ref": "ClusterSubnetId"
+        },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "\n",
+              [
+                "#!/bin/bash",
+                "rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "cat <<EOT >>  \"/etc/yum.repos.d/elasticsearch.repo\"",
+                "[elasticsearch]",
+                "name=Elasticsearch repository for 7.x packages",
+                "baseurl=https://artifacts.elastic.co/packages/7.x/yum",
+                "gpgcheck=1",
+                "gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "enabled=0",
+                "autorefresh=1",
+                "type=rpm-md",
+                "EOT",
+                "yum update -y",
+                "amazon-linux-extras install java-openjdk11 -y",
+                "yum install --enablerepo=elasticsearch elasticsearch -y",
+                "/usr/share/elasticsearch/bin/elasticsearch-plugin install discovery-ec2 -b",
+                "cat <<EOT > \"/etc/elasticsearch/elasticsearch.yml\"",
+                "cluster.name: lgbtqia-helper",
+                "node.name: \"coordinator-1\"",
+                "node.data: false",
+                "node.master: false",
+                "node.ingest: false",
+                "path.data: /var/lib/elasticsearch",
+                "path.logs: /var/log/elasticsearch",
+                "network.host: 0.0.0.0",
+                "network.publish_host: _site_",
+                {
+                  "Fn::Sub": [
+                    "cluster.initial_master_nodes: \"${MasterIp}\"",
+                    {
+                      "MasterIp": {
+                        "Fn::GetAtt": [
+                          "MasterNode1",
+                          "PrivateIp"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "http.port: 9200",
+                "discovery.seed_providers: ec2",
+                "discovery.ec2.tag.cluster: lgbtqia-helper",
+                "discovery.ec2.endpoint: \"ec2.us-east-1.amazonaws.com\"",
+                "EOT",
+                "sed -i 's/-Xms1g/-Xms512m/g' /etc/elasticsearch/jvm.options",
+                "sed -i 's/-Xmx1g/-Xmx512m/g' /etc/elasticsearch/jvm.options",
+                "systemctl start elasticsearch"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "DataNode1": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "cluster",
+            "Value": "lgbtqia-helper"
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "EC2InstanceProfileCluster"
+        },
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "DeleteOnTermination": true,
+              "Encrypted": false,
+              "VolumeSize": 30,
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "ImageId": "ami-0323c3dd2da7fb37d",
+        "InstanceType": "t2.micro",
+        "KeyName": {
+          "Ref": "KeyPair"
+        },
+        "SecurityGroupIds": {
+          "Ref": "ClusterSecurityGroup"
+        },
+        "SubnetId": {
+          "Ref": "ClusterSubnetId"
+        },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "\n",
+              [
+                "#!/bin/bash",
+                "rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "cat <<EOT >>  \"/etc/yum.repos.d/elasticsearch.repo\"",
+                "[elasticsearch]",
+                "name=Elasticsearch repository for 7.x packages",
+                "baseurl=https://artifacts.elastic.co/packages/7.x/yum",
+                "gpgcheck=1",
+                "gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "enabled=0",
+                "autorefresh=1",
+                "type=rpm-md",
+                "EOT",
+                "yum update -y",
+                "amazon-linux-extras install java-openjdk11 -y",
+                "yum install --enablerepo=elasticsearch elasticsearch -y",
+                "/usr/share/elasticsearch/bin/elasticsearch-plugin install discovery-ec2 -b",
+                "cat <<EOT > \"/etc/elasticsearch/elasticsearch.yml\"",
+                "cluster.name: lgbtqia-helper",
+                "node.name: \"data-1\"",
+                "node.data: true",
+                "node.master: false",
+                "node.ingest: false",
+                "path.data: /var/lib/elasticsearch",
+                "path.logs: /var/log/elasticsearch",
+                "network.host: 0.0.0.0",
+                "network.publish_host: _site_",
+                {
+                  "Fn::Sub": [
+                    "cluster.initial_master_nodes: \"${MasterIp}\"",
+                    {
+                      "MasterIp": {
+                        "Fn::GetAtt": [
+                          "MasterNode1",
+                          "PrivateIp"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "http.port: 9200",
+                "discovery.seed_providers: ec2",
+                "discovery.ec2.tag.cluster: lgbtqia-helper",
+                "discovery.ec2.endpoint: \"ec2.us-east-1.amazonaws.com\"",
+                "EOT",
+                "sed -i 's/-Xms1g/-Xms512m/g' /etc/elasticsearch/jvm.options",
+                "sed -i 's/-Xmx1g/-Xmx512m/g' /etc/elasticsearch/jvm.options",
+                "systemctl start elasticsearch"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "DataNode2": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "cluster",
+            "Value": "lgbtqia-helper"
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "EC2InstanceProfileCluster"
+        },
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "DeleteOnTermination": true,
+              "Encrypted": false,
+              "VolumeSize": 30,
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "ImageId": "ami-0323c3dd2da7fb37d",
+        "InstanceType": "t2.micro",
+        "KeyName": {
+          "Ref": "KeyPair"
+        },
+        "SecurityGroupIds": {
+          "Ref": "ClusterSecurityGroup"
+        },
+        "SubnetId": {
+          "Ref": "ClusterSubnetId"
+        },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "\n",
+              [
+                "#!/bin/bash",
+                "rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "cat <<EOT >>  \"/etc/yum.repos.d/elasticsearch.repo\"",
+                "[elasticsearch]",
+                "name=Elasticsearch repository for 7.x packages",
+                "baseurl=https://artifacts.elastic.co/packages/7.x/yum",
+                "gpgcheck=1",
+                "gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "enabled=0",
+                "autorefresh=1",
+                "type=rpm-md",
+                "EOT",
+                "yum update -y",
+                "amazon-linux-extras install java-openjdk11 -y",
+                "yum install --enablerepo=elasticsearch elasticsearch -y",
+                "/usr/share/elasticsearch/bin/elasticsearch-plugin install discovery-ec2 -b",
+                "cat <<EOT > \"/etc/elasticsearch/elasticsearch.yml\"",
+                "cluster.name: lgbtqia-helper",
+                "node.name: \"data-2\"",
+                "node.data: true",
+                "node.master: false",
+                "node.ingest: false",
+                "path.data: /var/lib/elasticsearch",
+                "path.logs: /var/log/elasticsearch",
+                "network.host: 0.0.0.0",
+                "network.publish_host: _site_",
+                {
+                  "Fn::Sub": [
+                    "cluster.initial_master_nodes: \"${MasterIp}\"",
+                    {
+                      "MasterIp": {
+                        "Fn::GetAtt": [
+                          "MasterNode1",
+                          "PrivateIp"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "http.port: 9200",
+                "discovery.seed_providers: ec2",
+                "discovery.ec2.tag.cluster: lgbtqia-helper",
+                "discovery.ec2.endpoint: \"ec2.us-east-1.amazonaws.com\"",
+                "EOT",
+                "sed -i 's/-Xms1g/-Xms512m/g' /etc/elasticsearch/jvm.options",
+                "sed -i 's/-Xmx1g/-Xmx512m/g' /etc/elasticsearch/jvm.options",
+                "systemctl start elasticsearch"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "DataNode3": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "cluster",
+            "Value": "lgbtqia-helper"
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "EC2InstanceProfileCluster"
+        },
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "DeleteOnTermination": true,
+              "Encrypted": false,
+              "VolumeSize": 30,
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "ImageId": "ami-0323c3dd2da7fb37d",
+        "InstanceType": "t2.micro",
+        "KeyName": {
+          "Ref": "KeyPair"
+        },
+        "SecurityGroupIds": {
+          "Ref": "ClusterSecurityGroup"
+        },
+        "SubnetId": {
+          "Ref": "ClusterSubnetId"
+        },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "\n",
+              [
+                "#!/bin/bash",
+                "rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "cat <<EOT >>  \"/etc/yum.repos.d/elasticsearch.repo\"",
+                "[elasticsearch]",
+                "name=Elasticsearch repository for 7.x packages",
+                "baseurl=https://artifacts.elastic.co/packages/7.x/yum",
+                "gpgcheck=1",
+                "gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "enabled=0",
+                "autorefresh=1",
+                "type=rpm-md",
+                "EOT",
+                "yum update -y",
+                "amazon-linux-extras install java-openjdk11 -y",
+                "yum install --enablerepo=elasticsearch elasticsearch -y",
+                "/usr/share/elasticsearch/bin/elasticsearch-plugin install discovery-ec2 -b",
+                "cat <<EOT > \"/etc/elasticsearch/elasticsearch.yml\"",
+                "cluster.name: lgbtqia-helper",
+                "node.name: \"data-3\"",
+                "node.data: true",
+                "node.master: false",
+                "node.ingest: false",
+                "path.data: /var/lib/elasticsearch",
+                "path.logs: /var/log/elasticsearch",
+                "network.host: 0.0.0.0",
+                "network.publish_host: _site_",
+                {
+                  "Fn::Sub": [
+                    "cluster.initial_master_nodes: \"${MasterIp}\"",
+                    {
+                      "MasterIp": {
+                        "Fn::GetAtt": [
+                          "MasterNode1",
+                          "PrivateIp"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "http.port: 9200",
+                "discovery.seed_providers: ec2",
+                "discovery.ec2.tag.cluster: lgbtqia-helper",
+                "discovery.ec2.endpoint: \"ec2.us-east-1.amazonaws.com\"",
+                "EOT",
+                "sed -i 's/-Xms1g/-Xms512m/g' /etc/elasticsearch/jvm.options",
+                "sed -i 's/-Xmx1g/-Xmx512m/g' /etc/elasticsearch/jvm.options",
+                "systemctl start elasticsearch"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "Kibana1": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "DeleteOnTermination": true,
+              "Encrypted": false,
+              "VolumeSize": 10,
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "ImageId": "ami-0323c3dd2da7fb37d",
+        "InstanceType": "t2.micro",
+        "KeyName": {
+          "Ref": "KeyPair"
+        },
+        "SecurityGroupIds": {
+          "Ref": "ClusterSecurityGroup"
+        },
+        "SubnetId": {
+          "Ref": "ClusterSubnetId"
+        },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "\n",
+              [
+                "#!/bin/bash",
+                "rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "cat <<EOT >>  \"/etc/yum.repos.d/kibana.repo\"",
+                "[kibana]",
+                "name=Kibana repository for 7.x packages",
+                "baseurl=https://artifacts.elastic.co/packages/7.x/yum",
+                "gpgcheck=1",
+                "gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch",
+                "enabled=1",
+                "autorefresh=1",
+                "type=rpm-md",
+                "EOT",
+                "yum update -y",
+                "amazon-linux-extras install java-openjdk11 -y",
+                "yum install --enablerepo=kibana kibana -y",
+                "cat <<EOT > \"/etc/kibana/kibana.yml\"",
+                "server.port: 5601",
+                "server.host: \"$HOSTNAME\"",
+                "server.name: \"LGBTQIA+ HELPER\"",
+                {
+                  "Fn::Sub": [
+                    "elasticsearch.hosts: [\"http://${CoordIP}:9200\"]",
+                    {
+                      "CoordIP": {
+                        "Fn::GetAtt": [
+                          "CoordinatorNode1",
+                          "PrivateIp"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "logging.dest: /var/log/kibana/kibana.log",
+                "EOT",
+                "mkdir /var/log/kibana",
+                "touch /var/log/kibana/kibana.log",
+                "chown -R kibana. /var/log/kibana",
+                "systemctl start kibana",
+                {
+                  "Fn::Sub": [
+                    "curl -X PUT \"${DataIp}:9200/_template/template_1?pretty\" -H 'Content-Type: application/json' -d'",
+                    {
+                      "DataIp": {
+                        "Fn::GetAtt": [
+                          "DataNode1",
+                          "PrivateIp"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "{",
+                "  \"index_patterns\": [\"twitter*\"],",
+                "  \"order\": 0",
+                "  \"settings\": {",
+                "    \"index.blocks.read_only_allow_delete\": \"false\",",
+                "  \"index.priority\": \"1\",",
+                "  \"index.query.default_field\": [",
+                "    \"*\"",
+                "  ],",
+                "  \"index.refresh_interval\": \"1s\",",
+                "  \"index.write.wait_for_active_shards\": \"1\",",
+                "  \"index.number_of_replicas\": \"1\",",
+                "  \"index.mapping.total_fields.limit\": 3000",
+                "  }",
+                "}",
+                "'"
+              ]
+            ]
+          }
+        }
+      },
+      "DependsOn": "DataNode1"
+    }
+  }
+}

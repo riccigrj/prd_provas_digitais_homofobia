@@ -1,0 +1,19 @@
+{
+  "bucket_name": "",
+  "google_credentials_path": "",
+  "key_pair_name":"",
+  "cluster_elastic": {
+    "security_group": "",
+    "subnet": ""
+  },
+  "lambda": {
+    "security_group": "",
+    "subnet": ""
+  },
+  "twitter": {
+    "consumer_key": "",
+    "consumer_secret": "",
+    "oauth_token": "",
+    "oauth_secret": ""
+  }
+}
