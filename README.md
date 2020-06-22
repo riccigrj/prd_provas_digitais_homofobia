@@ -5,23 +5,30 @@ Monitoramento do Twitter, a fim de coletar suas postagens, os tweets, que tenham
 
 ![Topologia](/topologia2.png)
 
-- create_lgbtqia_helper.py
+- **create_lgbtqia_helper.py**
+
 Script Python para a criação/deploy de toda a arquitetura.
 
-- conf.json
+- **conf.json**
+
 Arquivo de configuração para a execução do script "create_lgbtqia_helper.py"
 
-- stack.json
+- **stack.json**
+
 Cloud Formation para a criação da arquitetura na AWS.
 
-- lgbtqia-helper.py
+- **lgbtqia-helper.py**
+
 Script Python responsável pela inteligência de toda a arquitetura.
 
-- lgbtqia-streamer.conf
+- **lgbtqia-streamer.conf**
+
 Arquivo de configuração do Logstash para a coleta dos Tweets.
 
-- filter_logstash.rb
+- **filter_logstash.rb**
+
 Script Ruby utilizado para a adição do campo "word".
 
-- keywords.txt
+- **keywords.txt**
+
 Palavras utilizadas na coleta dos Tweets.
